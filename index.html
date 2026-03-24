@@ -1,0 +1,662 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TP Cross Dock Tracker — Live Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,300&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg:#0d0f14; --bg2:#13161e; --bg3:#1a1e29; --bg4:#1f2433;
+    --border:rgba(255,255,255,0.07); --border2:rgba(255,255,255,0.12);
+    --text:#e8e6df; --text2:#8c8a83; --text3:#5a5855;
+    --accent:#4f8ef7;
+    --red:#e84848; --red-bg:rgba(232,72,72,0.1); --red-border:rgba(232,72,72,0.25);
+    --green:#3fba7a; --green-bg:rgba(63,186,122,0.1); --green-border:rgba(63,186,122,0.25);
+    --amber:#f0a030; --amber-bg:rgba(240,160,48,0.1);
+    --font:'DM Sans',sans-serif; --mono:'DM Mono',monospace;
+  }
+  html { font-size:14px; }
+  body { font-family:var(--font); background:var(--bg); color:var(--text); min-height:100vh; line-height:1.5; }
+
+  /* Header */
+  .header { background:var(--bg2); border-bottom:1px solid var(--border); padding:0 2rem; display:flex; align-items:center; justify-content:space-between; height:60px; position:sticky; top:0; z-index:100; }
+  .header-left { display:flex; align-items:center; gap:12px; }
+  .logo-mark { width:32px; height:32px; background:var(--accent); border-radius:8px; display:flex; align-items:center; justify-content:center; font-weight:600; font-size:13px; color:#fff; }
+  .header-title { font-size:14px; font-weight:500; }
+  .header-sub { font-size:12px; color:var(--text3); margin-left:8px; }
+  .header-right { display:flex; align-items:center; gap:10px; }
+  .period-badge { font-family:var(--mono); font-size:11px; color:var(--accent); background:rgba(79,142,247,0.1); border:1px solid rgba(79,142,247,0.2); border-radius:4px; padding:3px 10px; }
+  .refresh-btn { font-family:var(--mono); font-size:11px; color:var(--text3); background:var(--bg3); border:1px solid var(--border); border-radius:4px; padding:3px 10px; cursor:pointer; transition:border-color 0.2s, color 0.2s; }
+  .refresh-btn:hover { border-color:var(--border2); color:var(--text); }
+  .live-dot { width:6px; height:6px; border-radius:50%; background:var(--green); display:inline-block; margin-right:4px; animation:pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+  /* Layout */
+  .main { max-width:1280px; margin:0 auto; padding:2rem; }
+  .section { margin-bottom:2rem; }
+  .section-header { font-size:11px; font-weight:500; color:var(--text3); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:12px; display:flex; align-items:center; gap:8px; }
+  .section-header::after { content:''; flex:1; height:1px; background:var(--border); }
+
+  /* Loading */
+  .loading-screen { position:fixed; inset:0; background:var(--bg); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px; z-index:999; transition:opacity 0.4s; }
+  .loading-screen.hidden { opacity:0; pointer-events:none; }
+  .spinner { width:36px; height:36px; border:2px solid var(--border); border-top-color:var(--accent); border-radius:50%; animation:spin 0.7s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .loading-text { font-size:13px; color:var(--text3); font-family:var(--mono); }
+  .error-banner { background:var(--red-bg); border:1px solid var(--red-border); border-radius:10px; padding:1rem 1.25rem; color:var(--red); font-size:13px; margin-bottom:1rem; display:none; }
+
+  /* KPI */
+  .kpi-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; }
+  .kpi-card { background:var(--bg3); border:1px solid var(--border); border-radius:12px; padding:1.25rem 1.25rem 1rem; position:relative; overflow:hidden; transition:border-color 0.2s; }
+  .kpi-card:hover { border-color:var(--border2); }
+  .kpi-card::before { content:''; position:absolute; top:0; left:0; right:0; height:2px; background:var(--accent); opacity:0; transition:opacity 0.2s; }
+  .kpi-card:hover::before, .kpi-card.highlight::before { opacity:1; }
+  .kpi-label { font-size:11px; color:var(--text3); text-transform:uppercase; letter-spacing:0.06em; margin-bottom:8px; }
+  .kpi-value { font-size:32px; font-weight:300; line-height:1; color:var(--text); margin-bottom:4px; font-variant-numeric:tabular-nums; }
+  .kpi-value span { font-size:16px; font-weight:400; color:var(--text2); }
+  .kpi-sub { font-size:12px; color:var(--text3); }
+
+  /* Split */
+  .split-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .split-card { background:var(--bg3); border:1px solid var(--border); border-radius:12px; padding:1.25rem; }
+  .split-card.danger { border-color:var(--red-border); background:linear-gradient(135deg,var(--bg3),rgba(232,72,72,0.04)); }
+  .split-card.success { border-color:var(--green-border); background:linear-gradient(135deg,var(--bg3),rgba(63,186,122,0.04)); }
+  .split-title { font-size:12px; font-weight:500; margin-bottom:1rem; display:flex; align-items:center; gap:8px; }
+  .pill { font-size:11px; padding:2px 8px; border-radius:20px; font-weight:500; }
+  .pill.red { background:var(--red-bg); color:var(--red); border:1px solid var(--red-border); }
+  .pill.green { background:var(--green-bg); color:var(--green); border:1px solid var(--green-border); }
+  .split-metrics { display:grid; grid-template-columns:1fr 1fr; gap:1rem; }
+  .sm-label { font-size:11px; color:var(--text3); margin-bottom:4px; }
+  .sm-value { font-size:22px; font-weight:400; color:var(--text); line-height:1; }
+  .sm-pct { font-size:11px; color:var(--text3); margin-top:3px; }
+  .bar-track { background:var(--bg4); border-radius:3px; height:5px; margin-top:5px; overflow:hidden; }
+  .bar-fill { height:5px; border-radius:3px; }
+
+  /* Fill Rate */
+  .fillrate-card { background:var(--bg3); border:1px solid var(--border); border-radius:12px; padding:1.25rem; }
+  .fillrate-inner { display:grid; grid-template-columns:180px 1fr; gap:2rem; align-items:center; }
+  .fillrate-left { display:flex; flex-direction:column; align-items:center; gap:14px; }
+  .donut-wrap { position:relative; width:140px; height:140px; }
+  .donut-wrap canvas { position:absolute; top:0; left:0; }
+  .donut-center { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+  .donut-pct { font-size:26px; font-weight:300; color:var(--text); line-height:1; }
+  .donut-lbl { font-size:10px; color:var(--text3); text-transform:uppercase; letter-spacing:0.07em; margin-top:3px; }
+  .fr-qty-row { display:flex; gap:12px; }
+  .fr-qty-item { text-align:center; }
+  .fr-qty-val { font-size:12px; font-weight:500; font-family:var(--mono); color:var(--text); }
+  .fr-qty-lbl { font-size:10px; color:var(--text3); }
+  .fr-divider { color:var(--text3); font-size:14px; padding-top:4px; }
+  .fr-rows { }
+  .fr-row { display:grid; grid-template-columns:38px 1fr 48px; align-items:center; gap:10px; padding:5px 0; border-bottom:1px solid var(--border); }
+  .fr-row:last-child { border-bottom:none; }
+  .fr-mname { font-size:12px; color:var(--text2); }
+  .fr-btrack { background:var(--bg4); border-radius:3px; height:6px; overflow:hidden; }
+  .fr-bfill { height:6px; border-radius:3px; }
+  .fr-val { font-size:11px; font-family:var(--mono); font-weight:500; text-align:right; }
+
+  /* Route WAT */
+  .route-card { background:var(--bg3); border:1px solid var(--border); border-radius:12px; padding:1.25rem; }
+  .route-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:10px; }
+  .route-tile { background:var(--bg4); border:1px solid var(--border); border-radius:10px; padding:0.9rem 1rem; position:relative; overflow:hidden; transition:border-color 0.2s; }
+  .route-tile:hover { border-color:var(--border2); }
+  .route-tile::after { content:''; position:absolute; bottom:0; left:0; right:0; height:3px; background:var(--tc,var(--accent)); opacity:0.55; }
+  .route-dest { font-size:13px; font-weight:500; color:var(--text); font-family:var(--mono); margin-bottom:1px; }
+  .route-src { font-size:10px; color:var(--text3); margin-bottom:8px; }
+  .route-tat { font-size:24px; font-weight:300; color:var(--text); line-height:1; font-variant-numeric:tabular-nums; }
+  .route-tat span { font-size:12px; color:var(--text2); font-weight:400; }
+  .route-meta { display:flex; gap:12px; margin-top:6px; }
+  .route-meta-item { font-size:10px; color:var(--text3); }
+  .route-meta-item strong { color:var(--text2); font-weight:500; }
+
+  /* Chart */
+  .chart-card { background:var(--bg3); border:1px solid var(--border); border-radius:12px; padding:1.25rem; }
+  .chart-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:1rem; flex-wrap:wrap; gap:8px; }
+  .chart-title { font-size:13px; font-weight:500; }
+  .legend { display:flex; gap:16px; flex-wrap:wrap; }
+  .legend-item { display:flex; align-items:center; gap:5px; font-size:11px; color:var(--text3); }
+  .legend-dot { width:8px; height:8px; border-radius:2px; }
+  .chart-wrap { position:relative; width:100%; height:220px; }
+
+  /* Table */
+  .table-card { background:var(--bg3); border:1px solid var(--border); border-radius:12px; overflow:hidden; }
+  .table-header-row { display:grid; grid-template-columns:80px 80px 110px 100px 80px 110px 80px 110px; padding:10px 1.25rem; background:var(--bg4); border-bottom:1px solid var(--border); font-size:10px; font-weight:500; color:var(--text3); text-transform:uppercase; letter-spacing:0.07em; }
+  .table-header-row > *, .table-row > * { text-align:right; }
+  .table-header-row > *:first-child, .table-row > *:first-child { text-align:left; }
+  .table-row { display:grid; grid-template-columns:80px 80px 110px 100px 80px 110px 80px 110px; padding:9px 1.25rem; border-bottom:1px solid var(--border); font-size:12px; font-family:var(--mono); color:var(--text2); transition:background 0.15s; }
+  .table-row:last-child { border-bottom:none; background:var(--bg4); color:var(--text); font-weight:500; }
+  .table-row:hover:not(:last-child) { background:rgba(255,255,255,0.03); }
+  .table-row .month { font-family:var(--font); color:var(--text); font-size:12px; }
+  .tat-value { font-weight:500; }
+  .tat-red { color:var(--red); }
+  .tat-green { color:var(--green); }
+
+  /* Insights */
+  .insights { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+  .insight-card { background:var(--bg3); border:1px solid var(--border); border-radius:10px; padding:1rem; display:flex; gap:10px; }
+  .insight-icon { width:32px; height:32px; border-radius:8px; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:15px; }
+  .insight-icon.warn { background:var(--amber-bg); }
+  .insight-icon.good { background:var(--green-bg); }
+  .insight-icon.info { background:rgba(79,142,247,0.1); }
+  .insight-title { font-size:12px; font-weight:500; color:var(--text); margin-bottom:3px; }
+  .insight-desc { font-size:11px; color:var(--text3); line-height:1.5; }
+
+  .footer { text-align:center; padding:2rem; font-size:11px; color:var(--text3); border-top:1px solid var(--border); margin-top:2rem; }
+
+  @keyframes fadeUp { from{opacity:0;transform:translateY(16px)} to{opacity:1;transform:translateY(0)} }
+  .fade-up { animation:fadeUp 0.5s ease both; }
+
+  @media(max-width:900px) {
+    .kpi-grid{grid-template-columns:1fr 1fr}
+    .fillrate-inner{grid-template-columns:1fr}
+    .table-header-row,.table-row{grid-template-columns:60px 60px 90px 85px 70px 85px 70px 85px;font-size:11px}
+    .insights{grid-template-columns:1fr}
+  }
+  @media(max-width:600px) {
+    .split-grid{grid-template-columns:1fr}
+    .main{padding:1rem}
+    .header{padding:0 1rem}
+  }
+</style>
+</head>
+<body>
+
+<!-- Loading screen -->
+<div class="loading-screen" id="loadingScreen">
+  <div class="spinner"></div>
+  <div class="loading-text">Fetching live data...</div>
+</div>
+
+<header class="header">
+  <div class="header-left">
+    <div class="logo-mark">TP</div>
+    <span class="header-title">Cross Dock Tracker</span>
+    <span class="header-sub">— Live Dashboard</span>
+  </div>
+  <div class="header-right">
+    <span class="period-badge" id="periodBadge">Loading...</span>
+    <button class="refresh-btn" onclick="loadData()">↻ Refresh</button>
+  </div>
+</header>
+
+<main class="main">
+  <div class="error-banner" id="errorBanner"></div>
+
+  <!-- KPI -->
+  <div class="section">
+    <div class="section-header">Key metrics</div>
+    <div class="kpi-grid">
+      <div class="kpi-card highlight fade-up">
+        <div class="kpi-label">Weighted Avg TAT</div>
+        <div class="kpi-value" id="kpiTAT">—</div>
+        <div class="kpi-sub" id="kpiTATsub">—</div>
+      </div>
+      <div class="kpi-card fade-up">
+        <div class="kpi-label">Total POs</div>
+        <div class="kpi-value" id="kpiPOs">—</div>
+        <div class="kpi-sub" id="kpiPOssub">—</div>
+      </div>
+      <div class="kpi-card fade-up">
+        <div class="kpi-label">Total Invoice Qty</div>
+        <div class="kpi-value" id="kpiQty">—</div>
+        <div class="kpi-sub" id="kpiQtysub">—</div>
+      </div>
+      <div class="kpi-card fade-up">
+        <div class="kpi-label">Delivery Rate</div>
+        <div class="kpi-value" id="kpiDel">—</div>
+        <div class="kpi-sub" id="kpiDelsub">—</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAT Split -->
+  <div class="section">
+    <div class="section-header">TAT split — 15-day threshold</div>
+    <div class="split-grid">
+      <div class="split-card danger">
+        <div class="split-title"><span class="pill red">▲ Above 15 days</span> — breached target</div>
+        <div class="split-metrics">
+          <div>
+            <div class="sm-label">POs</div>
+            <div class="sm-value" id="abovePOs">—</div>
+            <div class="sm-pct" id="abovePOspct">—</div>
+            <div class="bar-track"><div class="bar-fill" id="abovePOsbar" style="background:var(--red);"></div></div>
+          </div>
+          <div>
+            <div class="sm-label">Invoice Qty</div>
+            <div class="sm-value" id="aboveQty">—</div>
+            <div class="sm-pct" id="aboveQtypct">—</div>
+            <div class="bar-track"><div class="bar-fill" id="aboveQtybar" style="background:var(--red);"></div></div>
+          </div>
+        </div>
+      </div>
+      <div class="split-card success">
+        <div class="split-title"><span class="pill green">✓ Within 15 days</span> — on target</div>
+        <div class="split-metrics">
+          <div>
+            <div class="sm-label">POs</div>
+            <div class="sm-value" id="belowPOs">—</div>
+            <div class="sm-pct" id="belowPOspct">—</div>
+            <div class="bar-track"><div class="bar-fill" id="belowPOsbar" style="background:var(--green);"></div></div>
+          </div>
+          <div>
+            <div class="sm-label">Invoice Qty</div>
+            <div class="sm-value" id="belowQty">—</div>
+            <div class="sm-pct" id="belowQtypct">—</div>
+            <div class="bar-track"><div class="bar-fill" id="belowQtybar" style="background:var(--green);"></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Fill Rate -->
+  <div class="section">
+    <div class="section-header">Fill rate — invoice qty ÷ PO qty</div>
+    <div class="fillrate-card">
+      <div class="fillrate-inner">
+        <div class="fillrate-left">
+          <div class="donut-wrap">
+            <canvas id="donutChart" width="140" height="140"></canvas>
+            <div class="donut-center">
+              <div class="donut-pct" id="donutPct">—</div>
+              <div class="donut-lbl">Fill Rate</div>
+            </div>
+          </div>
+          <div class="fr-qty-row">
+            <div class="fr-qty-item">
+              <div class="fr-qty-val" id="frPOQty">—</div>
+              <div class="fr-qty-lbl">PO Qty</div>
+            </div>
+            <div class="fr-divider">→</div>
+            <div class="fr-qty-item">
+              <div class="fr-qty-val" id="frInvQty" style="color:var(--amber);">—</div>
+              <div class="fr-qty-lbl">Inv Qty</div>
+            </div>
+            <div class="fr-divider">·</div>
+            <div class="fr-qty-item">
+              <div class="fr-qty-val" id="frUnfulfilled" style="color:var(--red);">—</div>
+              <div class="fr-qty-lbl">Unfulfilled</div>
+            </div>
+          </div>
+        </div>
+        <div class="fr-rows" id="frRows"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Route WAT -->
+  <div class="section">
+    <div class="section-header">Weighted avg TAT — by destination (source: GGN)</div>
+    <div class="route-card">
+      <div class="route-grid" id="routeGrid"></div>
+    </div>
+  </div>
+
+  <!-- TAT Chart -->
+  <div class="section">
+    <div class="section-header">Monthly TAT trend</div>
+    <div class="chart-card">
+      <div class="chart-header">
+        <div class="chart-title">Weighted Average TAT by PO Month</div>
+        <div class="legend">
+          <div class="legend-item"><span class="legend-dot" style="background:var(--accent);"></span>Within target</div>
+          <div class="legend-item"><span class="legend-dot" style="background:var(--red);"></span>Above 15 days</div>
+          <div class="legend-item"><span class="legend-dot" style="background:rgba(255,255,255,0.2);width:18px;height:3px;border-radius:2px;"></span>15-day target</div>
+        </div>
+      </div>
+      <div class="chart-wrap"><canvas id="tatChart"></canvas></div>
+    </div>
+  </div>
+
+  <!-- Table -->
+  <div class="section">
+    <div class="section-header">Month-wise breakdown</div>
+    <div class="table-card">
+      <div class="table-header-row">
+        <div>Month</div><div>Total POs</div><div>Invoice Qty</div><div>Wtd Avg TAT</div>
+        <div>POs &gt;15d</div><div>Qty &gt;15d</div><div>POs ≤15d</div><div>Qty ≤15d</div>
+      </div>
+      <div id="tableBody"></div>
+    </div>
+  </div>
+
+  <!-- Insights -->
+  <div class="section">
+    <div class="section-header">Key insights</div>
+    <div class="insights" id="insightsGrid"></div>
+  </div>
+</main>
+
+<footer class="footer">
+  TP Cross Dock Tracker &nbsp;·&nbsp; <span id="footerPeriod">—</span> &nbsp;·&nbsp;
+  <span class="live-dot"></span>Live — data from Google Sheets &nbsp;·&nbsp; Last refreshed: <span id="lastRefreshed">—</span>
+</footer>
+
+<script>
+const SHEET_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRZxljPHfN3xGj_F6gaAY8QSSPY0TMVvNu5ra0peVd7HOnF8WTyBTmypaAuIQI3zeX8v8RmzADeXCKV/pub?output=csv';
+
+const MONTH_ORDER = ['April','May','June','July','August','September','October','November','December','January','February','March'];
+const MONTH_SHORT = {April:'Apr',May:'May',June:'Jun',July:'Jul',August:'Aug',September:'Sep',October:'Oct',November:'Nov',December:'Dec',January:'Jan',February:'Feb',March:'Mar'};
+
+let donutChartInst = null;
+let tatChartInst = null;
+
+const fmt = n => Math.round(Number(n)).toLocaleString('en-IN');
+const fmtL = n => { const v = Number(n); return v >= 100000 ? (v/100000).toFixed(1)+'L' : fmt(v); };
+const toN = v => { const n = parseFloat(v); return isNaN(n) ? null : n; };
+
+function loadData() {
+  document.getElementById('loadingScreen').classList.remove('hidden');
+  document.getElementById('errorBanner').style.display = 'none';
+
+  const proxies = [
+    `https://corsproxy.io/?${encodeURIComponent(SHEET_URL)}`,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(SHEET_URL)}`,
+    `https://cors-anywhere.herokuapp.com/${SHEET_URL}`,
+    SHEET_URL  // direct last (works if hosted on a server)
+  ];
+
+  async function tryFetch(urls) {
+    for (const url of urls) {
+      try {
+        const res = await fetch(url, { cache: 'no-store' });
+        if (res.ok) {
+          const text = await res.text();
+          if (text && text.length > 100) return text;
+        }
+      } catch(e) { /* try next */ }
+    }
+    throw new Error('All fetch attempts failed. Check your internet connection and that the sheet is published.');
+  }
+
+  tryFetch(proxies).then(csvText => {
+    const result = Papa.parse(csvText, { header: false, skipEmptyLines: true });
+    try {
+      process(result.data);
+      document.getElementById('loadingScreen').classList.add('hidden');
+      document.getElementById('lastRefreshed').textContent = new Date().toLocaleTimeString('en-IN');
+    } catch(e) {
+      showError('Failed to process data: ' + e.message);
+    }
+  }).catch(e => showError(e.message));
+}
+
+function showError(msg) {
+  document.getElementById('loadingScreen').classList.add('hidden');
+  const b = document.getElementById('errorBanner');
+  b.textContent = '⚠ ' + msg;
+  b.style.display = 'block';
+}
+
+function process(raw) {
+  // Row 0 = actual headers (row 1 in sheet which is the real header after skipping sheet title)
+  // Find header row — look for row containing 'PO No.' or 'Invoice Qty'
+  let headerIdx = 0;
+  for (let i = 0; i < Math.min(5, raw.length); i++) {
+    if (raw[i].some(c => c && (c.toString().includes('PO No') || c.toString().includes('Invoice Qty')))) {
+      headerIdx = i; break;
+    }
+  }
+  const headers = raw[headerIdx].map(h => h ? h.toString().trim() : '');
+  const rows = raw.slice(headerIdx + 1);
+
+  const col = name => headers.findIndex(h => h === name);
+
+  const C = {
+    spoc:        col('SPOC'),
+    poDate:      col('PO Date'),
+    poMonth:     col('PO Month'),
+    poNo:        col('PO No.'),
+    srcLoc:      col('Source Location'),
+    firstDest:   col('First Destination'),
+    poQty:       col('Quantity'),
+    invQty:      col('Invoice Qty'),
+    tat:         col('TAT'),
+    logStatus:   col('Logistics Status'),
+    crossStatus: col('Cross Dock Status'),
+  };
+
+  const data = rows
+    .filter(r => r[C.poNo] && r[C.poNo].toString().trim())
+    .map(r => ({
+      poNo:       r[C.poNo]?.toString().trim(),
+      poMonth:    r[C.poMonth]?.toString().trim(),
+      srcLoc:     r[C.srcLoc]?.toString().trim(),
+      firstDest:  r[C.firstDest]?.toString().trim(),
+      poQty:      toN(r[C.poQty]),
+      invQty:     toN(r[C.invQty]),
+      tat:        toN(r[C.tat]),
+      logStatus:  r[C.logStatus]?.toString().trim(),
+    }));
+
+  // ── KPIs ──
+  const withTAT   = data.filter(r => r.tat !== null && r.invQty !== null);
+  const totalInvQty = data.reduce((s,r) => s + (r.invQty||0), 0);
+  const totalPOQty  = data.reduce((s,r) => s + (r.poQty||0), 0);
+  const uniquePOs   = new Set(data.map(r => r.poNo)).size;
+  const wAvgTAT = withTAT.reduce((s,r) => s + r.tat*r.invQty, 0) / withTAT.reduce((s,r) => s + r.invQty, 0);
+  const delivered = data.filter(r => r.logStatus && r.logStatus.toLowerCase().includes('deliver')).length;
+  const fillRate  = totalPOQty > 0 ? (totalInvQty / totalPOQty * 100) : 0;
+
+  // ── Above / Below 15 ──
+  const above = data.filter(r => r.tat !== null && r.tat > 15);
+  const below = data.filter(r => r.tat !== null && r.tat <= 15);
+  const abovePOs  = new Set(above.map(r=>r.poNo)).size;
+  const belowPOs  = new Set(below.map(r=>r.poNo)).size;
+  const aboveQty  = above.reduce((s,r)=>s+(r.invQty||0),0);
+  const belowQty  = below.reduce((s,r)=>s+(r.invQty||0),0);
+  const abovePOPct  = (abovePOs/uniquePOs*100).toFixed(1);
+  const belowPOPct  = (belowPOs/uniquePOs*100).toFixed(1);
+  const aboveQtyPct = (aboveQty/totalInvQty*100).toFixed(1);
+  const belowQtyPct = (belowQty/totalInvQty*100).toFixed(1);
+
+  // ── Period ──
+  const months = [...new Set(data.map(r=>r.poMonth).filter(Boolean))];
+  const presentMonths = MONTH_ORDER.filter(m => months.includes(m));
+  const periodStr = presentMonths.length
+    ? `${MONTH_SHORT[presentMonths[0]]} '${guessYear(presentMonths[0],'start')} → ${MONTH_SHORT[presentMonths[presentMonths.length-1]]} '${guessYear(presentMonths[presentMonths.length-1],'end')}`
+    : '—';
+
+  // ── Monthly breakdown ──
+  const monthly = presentMonths.map(month => {
+    const mRows = data.filter(r => r.poMonth === month);
+    const mValid = mRows.filter(r => r.tat !== null && r.invQty !== null);
+    const mWAT = mValid.length ? mValid.reduce((s,r)=>s+r.tat*r.invQty,0) / mValid.reduce((s,r)=>s+r.invQty,0) : 0;
+    const mAbove = mRows.filter(r => r.tat !== null && r.tat > 15);
+    const mBelow = mRows.filter(r => r.tat !== null && r.tat <= 15);
+    const mPOQty = mRows.reduce((s,r)=>s+(r.poQty||0),0);
+    const mInvQty = mRows.reduce((s,r)=>s+(r.invQty||0),0);
+    return {
+      m: MONTH_SHORT[month] || month,
+      pos: new Set(mRows.map(r=>r.poNo)).size,
+      qty: mInvQty, poqty: mPOQty,
+      tat: mWAT,
+      ap: new Set(mAbove.map(r=>r.poNo)).size,
+      aq: mAbove.reduce((s,r)=>s+(r.invQty||0),0),
+      bp: new Set(mBelow.map(r=>r.poNo)).size,
+      bq: mBelow.reduce((s,r)=>s+(r.invQty||0),0),
+    };
+  });
+
+  // ── Routes (FC only) ──
+  const destMap = {};
+  data.forEach(r => {
+    if (!r.firstDest || r.firstDest.endsWith('_DC') || r.firstDest === 'nan') return;
+    if (!destMap[r.firstDest]) destMap[r.firstDest] = {qty:0, tatQty:0, pos:new Set()};
+    destMap[r.firstDest].qty += (r.invQty||0);
+    if (r.tat !== null && r.invQty !== null) destMap[r.firstDest].tatQty += r.tat * r.invQty;
+    destMap[r.firstDest].pos.add(r.poNo);
+  });
+  const routes = Object.entries(destMap)
+    .map(([dest, v]) => ({ dest, tat: v.qty ? v.tatQty/v.qty : 0, pos: v.pos.size, qty: v.qty }))
+    .filter(r => r.pos >= 3)
+    .sort((a,b) => a.tat - b.tat);
+
+  // ── Insights ──
+  const worstMonth = [...monthly].sort((a,b)=>b.tat-a.tat)[0];
+  const bestMonth  = [...monthly].sort((a,b)=>a.tat-b.tat)[0];
+  const lowestFR   = [...monthly].filter(m=>m.poqty>0).sort((a,b)=>(a.qty/a.poqty)-(b.qty/b.poqty))[0];
+
+  // ─────────── RENDER ───────────
+
+  // Period badge
+  document.getElementById('periodBadge').textContent = periodStr;
+  document.getElementById('footerPeriod').textContent = periodStr;
+
+  // KPIs
+  document.getElementById('kpiTAT').innerHTML = `${wAvgTAT.toFixed(2)} <span>days</span>`;
+  document.getElementById('kpiTATsub').textContent = `Across all ${fmt(withTAT.length)} POs with TAT data`;
+  document.getElementById('kpiPOs').textContent = fmt(uniquePOs);
+  document.getElementById('kpiPOssub').textContent = `Tracked ${periodStr}`;
+  document.getElementById('kpiQty').innerHTML = `${fmtL(totalInvQty)} <span>units</span>`;
+  document.getElementById('kpiQtysub').textContent = `${fmt(totalInvQty)} total units dispatched`;
+  document.getElementById('kpiDel').innerHTML = `${(delivered/data.length*100).toFixed(1)}<span>%</span>`;
+  document.getElementById('kpiDelsub').textContent = `${fmt(delivered)} of ${fmt(data.length)} rows delivered`;
+
+  // TAT split
+  document.getElementById('abovePOs').textContent = fmt(abovePOs);
+  document.getElementById('abovePOspct').textContent = `${abovePOPct}% of total POs`;
+  document.getElementById('abovePOsbar').style.width = abovePOPct + '%';
+  document.getElementById('aboveQty').textContent = fmt(aboveQty);
+  document.getElementById('aboveQtypct').textContent = `${aboveQtyPct}% of total qty`;
+  document.getElementById('aboveQtybar').style.width = aboveQtyPct + '%';
+  document.getElementById('belowPOs').textContent = fmt(belowPOs);
+  document.getElementById('belowPOspct').textContent = `${belowPOPct}% of total POs`;
+  document.getElementById('belowPOsbar').style.width = belowPOPct + '%';
+  document.getElementById('belowQty').textContent = fmt(belowQty);
+  document.getElementById('belowQtypct').textContent = `${belowQtyPct}% of total qty`;
+  document.getElementById('belowQtybar').style.width = belowQtyPct + '%';
+
+  // Fill rate donut
+  document.getElementById('donutPct').textContent = fillRate.toFixed(1) + '%';
+  document.getElementById('frPOQty').textContent = fmtL(totalPOQty);
+  document.getElementById('frInvQty').textContent = fmtL(totalInvQty);
+  document.getElementById('frUnfulfilled').textContent = fmtL(totalPOQty - totalInvQty);
+
+  if (donutChartInst) donutChartInst.destroy();
+  donutChartInst = new Chart(document.getElementById('donutChart'), {
+    type: 'doughnut',
+    data: { datasets: [{ data: [fillRate, 100-fillRate], backgroundColor:['#f0a030','#1f2433'], borderWidth:0, borderRadius:3 }] },
+    options: { cutout:'72%', plugins:{ legend:{display:false}, tooltip:{enabled:false} }, animation:{duration:1200} }
+  });
+
+  // Fill rate monthly bars
+  const frRowsEl = document.getElementById('frRows');
+  frRowsEl.innerHTML = '';
+  monthly.forEach(r => {
+    const fr = r.poqty > 0 ? r.qty/r.poqty*100 : 0;
+    const col = fr >= 85 ? '#3fba7a' : fr >= 75 ? '#f0a030' : '#e84848';
+    frRowsEl.innerHTML += `<div class="fr-row">
+      <div class="fr-mname">${r.m}</div>
+      <div class="fr-btrack"><div class="fr-bfill" style="width:${fr.toFixed(1)}%;background:${col};"></div></div>
+      <div class="fr-val" style="color:${col};">${fr.toFixed(1)}%</div>
+    </div>`;
+  });
+
+  // Routes
+  const rg = document.getElementById('routeGrid');
+  rg.innerHTML = '';
+  routes.forEach(r => {
+    const col = r.tat > 15 ? '#e84848' : r.tat > 13 ? '#f0a030' : '#3fba7a';
+    rg.innerHTML += `<div class="route-tile" style="--tc:${col};">
+      <div class="route-dest">${r.dest}</div>
+      <div class="route-src">from GGN</div>
+      <div class="route-tat">${r.tat.toFixed(2)} <span>days</span></div>
+      <div class="route-meta">
+        <div class="route-meta-item"><strong>${fmt(r.pos)}</strong> POs</div>
+        <div class="route-meta-item"><strong>${fmt(r.qty)}</strong> units</div>
+      </div>
+    </div>`;
+  });
+
+  // TAT Chart
+  if (tatChartInst) tatChartInst.destroy();
+  const barColors = monthly.map(r => r.tat > 15 ? '#e84848' : '#4f8ef7');
+  tatChartInst = new Chart(document.getElementById('tatChart'), {
+    type: 'bar',
+    data: { labels: monthly.map(r=>r.m), datasets:[{ data:monthly.map(r=>+r.tat.toFixed(2)), backgroundColor:barColors, borderRadius:5, barPercentage:0.6 }] },
+    options: {
+      responsive:true, maintainAspectRatio:false,
+      plugins: {
+        legend:{display:false},
+        tooltip:{ backgroundColor:'#1a1e29', borderColor:'rgba(255,255,255,0.1)', borderWidth:1, titleColor:'#8c8a83', bodyColor:'#e8e6df', padding:10,
+          callbacks:{ label: ctx => `  WAT: ${ctx.parsed.y.toFixed(2)} days` } }
+      },
+      scales: {
+        x:{ ticks:{color:'#5a5855',font:{family:"'DM Sans'",size:11}}, grid:{display:false}, border:{color:'rgba(255,255,255,0.07)'} },
+        y:{ min:0, ticks:{color:'#5a5855',font:{family:"'DM Mono'",size:10},callback:v=>v+'d'}, grid:{color:'rgba(255,255,255,0.05)'}, border:{display:false} }
+      }
+    },
+    plugins:[{ id:'targetLine', afterDraw(chart){
+      const {ctx,chartArea:{left,right},scales:{y}} = chart;
+      const yp = y.getPixelForValue(15);
+      ctx.save(); ctx.setLineDash([6,4]); ctx.strokeStyle='rgba(255,255,255,0.22)'; ctx.lineWidth=1;
+      ctx.beginPath(); ctx.moveTo(left,yp); ctx.lineTo(right,yp); ctx.stroke();
+      ctx.fillStyle='rgba(255,255,255,0.35)'; ctx.font='10px DM Mono,monospace';
+      ctx.fillText('15d target',right-68,yp-5); ctx.restore();
+    }}]
+  });
+
+  // Table
+  const tb = document.getElementById('tableBody');
+  tb.innerHTML = '';
+  let tot = {pos:0,qty:0,ap:0,aq:0,bp:0,bq:0};
+  monthly.forEach(r => {
+    ['pos','qty','ap','aq','bp','bq'].forEach(k => tot[k]+=r[k]);
+    const tc = r.tat>15?'tat-value tat-red':'tat-value tat-green';
+    const ap = r.pos ? ((r.ap/r.pos)*100).toFixed(0) : 0;
+    tb.innerHTML += `<div class="table-row">
+      <div class="month">${r.m}</div><div>${fmt(r.pos)}</div><div>${fmt(r.qty)}</div>
+      <div class="${tc}">${r.tat.toFixed(2)}d</div>
+      <div style="color:${r.ap>0?'var(--red)':'var(--text2)'};">${r.ap} <span style="font-size:10px;color:var(--text3);">(${ap}%)</span></div>
+      <div>${fmt(r.aq)}</div><div style="color:var(--green);">${r.bp}</div><div>${fmt(r.bq)}</div>
+    </div>`;
+  });
+  tb.innerHTML += `<div class="table-row">
+    <div class="month">Total</div><div>${fmt(tot.pos)}</div><div>${fmt(tot.qty)}</div>
+    <div class="tat-value">${wAvgTAT.toFixed(2)}d</div>
+    <div style="color:var(--red);">${tot.ap}</div><div>${fmt(tot.aq)}</div>
+    <div style="color:var(--green);">${tot.bp}</div><div>${fmt(tot.bq)}</div>
+  </div>`;
+
+  // Insights
+  const ig = document.getElementById('insightsGrid');
+  ig.innerHTML = `
+    <div class="insight-card">
+      <div class="insight-icon warn">⚠</div>
+      <div>
+        <div class="insight-title">${worstMonth.m} — highest TAT</div>
+        <div class="insight-desc">WAT of ${worstMonth.tat.toFixed(2)} days with ${worstMonth.ap} of ${worstMonth.pos} POs (${worstMonth.pos?((worstMonth.ap/worstMonth.pos)*100).toFixed(0):0}%) breaching the 15-day target.</div>
+      </div>
+    </div>
+    <div class="insight-card">
+      <div class="insight-icon good">✓</div>
+      <div>
+        <div class="insight-title">${bestMonth.m} — best performing month</div>
+        <div class="insight-desc">Only ${bestMonth.ap} POs exceeded 15 days. WAT of ${bestMonth.tat.toFixed(2)} days — well under target.</div>
+      </div>
+    </div>
+    <div class="insight-card">
+      <div class="insight-icon info">↗</div>
+      <div>
+        <div class="insight-title">Fill rate dip — ${lowestFR.m}</div>
+        <div class="insight-desc">Lowest fill rate in ${lowestFR.m} at ${lowestFR.poqty?(lowestFR.qty/lowestFR.poqty*100).toFixed(1):0}%. Overall ${fillRate.toFixed(1)}% fill rate across the period.</div>
+      </div>
+    </div>`;
+}
+
+function guessYear(month, pos) {
+  const earlyMonths = ['April','May','June','July','August','September','October','November','December'];
+  const lateMonths  = ['January','February','March'];
+  if (pos === 'start') return earlyMonths.includes(month) ? '25' : '26';
+  return lateMonths.includes(month) ? '26' : '25';
+}
+
+loadData();
+</script>
+</body>
+</html>
